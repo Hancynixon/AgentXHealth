@@ -1,45 +1,86 @@
 import numpy as np
-import pandas as pd
-from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import HistGradientBoostingClassifier
 
 
 class PhysicalAgentIntelligent:
-    """
-    PhysicalAgentIntelligent
-    ------------------------
-    Learns diabetes risk from physical measurements
-    (BMI, BloodPressure) using an interpretable model.
-    """
 
     def __init__(self):
-        self.model = LogisticRegression(solver="liblinear")
-        self.features = ["BMI", "BloodPressure"]
-        self.is_fitted = False
-
-    def fit(self, X: pd.DataFrame, y: pd.Series):
-        X_phys = X[self.features].copy()
-        self.model.fit(X_phys, y)
-        self.is_fitted = True
-
-    def predict(self, X: pd.DataFrame) -> dict:
-        if not self.is_fitted:
-            raise RuntimeError("PhysicalAgentIntelligent is not fitted.")
-
-        X_phys = X[self.features].copy()
-
-        risk = self.model.predict_proba(X_phys)[0, 1]
-
-        explanations = dict(
-            zip(self.features, self.model.coef_[0])
+        self.model = HistGradientBoostingClassifier(
+            max_iter=300,
+            learning_rate=0.05,
+            max_depth=4,
+            random_state=42
         )
+        self.X_train_ = None
 
-        counterfactuals = {
-            "BMI": "reduce" if explanations["BMI"] > 0 else "maintain",
-            "BloodPressure": "reduce" if explanations["BloodPressure"] > 0 else "maintain"
-        }
+    # --------------------------------------------------
+    # Clinical BMI staging (WHO inspired)
+    # --------------------------------------------------
+    def _bmi_stage(self, bmi):
+        if bmi < 18.5:
+            return 0  # underweight
+        elif bmi < 25:
+            return 1  # normal
+        elif bmi < 30:
+            return 2  # overweight
+        else:
+            return 3  # obese
+
+    # --------------------------------------------------
+    # Blood pressure staging (simplified risk levels)
+    # --------------------------------------------------
+    def _bp_stage(self, bp):
+        if bp < 80:
+            return 0
+        elif bp < 90:
+            return 1
+        elif bp < 100:
+            return 2
+        else:
+            return 3
+
+    # --------------------------------------------------
+    # Feature builder
+    # --------------------------------------------------
+    def _build_features(self, df):
+
+        bmi = df["BMI"].astype(float)
+        bp = df["BloodPressure"].astype(float)
+
+        bmi_stage = bmi.apply(self._bmi_stage)
+        bp_stage = bp.apply(self._bp_stage)
+
+        features = np.column_stack([
+            bmi,
+            bp,
+            bmi_stage,
+            bp_stage
+        ])
+
+        return features
+
+    # --------------------------------------------------
+    # Training
+    # --------------------------------------------------
+    def fit(self, df, y):
+
+        X = self._build_features(df)
+
+        self.model.fit(X, y)
+
+        self.X_train_ = X.copy()
+
+        return self
+
+    # --------------------------------------------------
+    # Prediction
+    # --------------------------------------------------
+    def predict(self, df):
+
+        X = self._build_features(df)
+
+        prob = self.model.predict_proba(X)[0][1]
 
         return {
-            "physical_risk_score": float(risk),
-            "physical_explanations": explanations,
-            "physical_counterfactuals": counterfactuals
+            "risk": round(float(prob), 4)
         }

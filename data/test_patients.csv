@@ -1,0 +1,11 @@
+Patient,Glucose,Insulin,BMI,BloodPressure,Age,Pregnancies,Expected_Category,Reason
+P1,80,10,22,110,25,0,LOW,Healthy baseline
+P2,105,25,26,120,32,1,MILD,Slight overweight and borderline glucose
+P3,125,60,30,135,40,2,MODERATE,Prediabetes + obesity + hypertension
+P4,160,120,34,150,48,3,HIGH,High glucose + obese + older age
+P5,210,300,38,170,55,5,CRITICAL,Severe hyperglycemia + insulin resistance
+P6,95,15,24,115,22,0,LOW,Young healthy person
+P7,140,80,32,145,45,4,HIGH,Multiple risk factors combined
+P8,180,200,36,160,52,6,CRITICAL,Clear diabetic metabolic syndrome
+P9,110,35,27,125,35,1,MILD,Borderline everything
+P10,130,70,29,140,38,2,MODERATE,Early metabolic risk

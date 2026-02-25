@@ -1,102 +1,88 @@
-import os
-import sys
-import numpy as np
 import pandas as pd
+import numpy as np
 
-# Path setup
-sys.path.append(os.path.abspath("."))
-
-# Agent imports
-from agents.lab_agent import LabAgent
-from agents.physical_agent import PhysicalAgent
-from agents.demographic_agent import DemographicAgent
-from coordinator.coordinator_agent import CoordinatorAgent
-
-# Risk engine
-from explainability.risk_engine import RiskEngine
-
-# ML imports
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report
-from xgboost import XGBClassifier
+from agents.lab_agent_intelligent import LabAgentIntelligent
+from agents.physical_agent_intelligent import PhysicalAgentIntelligent
+from agents.demographic_agent_intelligent import DemographicAgentIntelligent
+from coordinator.coordinator_reasoner import CoordinatorReasoner
+from evaluation.fairness_evaluator import FairnessEvaluator
+from evaluation.visualization import RiskVisualizer
+from evaluation.model_evaluator import ModelEvaluator
 
 
 def main():
-    print("🚀 Starting AgentXHealth System...\n")
 
-    # 1. Load dataset
+    print("=== Starting AgentXHealth ===")
+
+    # LOAD DATA
     df = pd.read_csv("data/raw/diabetes.csv")
-    print(f"Dataset loaded: {df.shape}\n")
-
-    # 2. Initialize agents
-    lab_agent = LabAgent()
-    physical_agent = PhysicalAgent()
-    demographic_agent = DemographicAgent()
-
-    # 3. Coordinator
-    coordinator = CoordinatorAgent(
-        lab_agent=lab_agent,
-        physical_agent=physical_agent,
-        demographic_agent=demographic_agent
-    )
-
-    X = coordinator.run(df)
     y = df["Outcome"]
 
-    print("Agents + Coordinator completed")
-    print("Final feature shape:", X.shape, "\n")
+    # TRAIN DOMAIN AGENTS
+    lab = LabAgentIntelligent()
+    lab.fit(df, y)
 
-    # 4. Train-test split
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
+    physical = PhysicalAgentIntelligent()
+    physical.fit(df, y)
+
+    demo = DemographicAgentIntelligent()
+    demo.fit(df, y)
+
+    # BUILD STACKING FEATURES
+    stack_features = []
+
+    for _, row in df.iterrows():
+        row_df = pd.DataFrame([row])
+
+        lab_risk = lab.predict(row_df)["risk"]
+        phys_risk = physical.predict(row_df)["risk"]
+        demo_risk = demo.predict(row_df)["risk"]
+
+        stack_features.append([lab_risk, phys_risk, demo_risk])
+
+    X_stack = np.array(stack_features)
+
+    # TRAIN COORDINATOR
+    coord = CoordinatorReasoner()
+    coord.fit(X_stack, y)
+
+    # FINAL PREDICTION LOOP
+    results = []
+
+    for _, row in df.iterrows():
+
+        row_df = pd.DataFrame([row])
+
+        outputs = {
+            "lab": lab.predict(row_df),
+            "physical": physical.predict(row_df),
+            "demographic": demo.predict(row_df)
+        }
+
+        decision = coord.reason(outputs)
+        results.append(decision)
+
+    # MERGE RESULTS
+    results_df = pd.concat(
+        [df.reset_index(drop=True), pd.DataFrame(results)],
+        axis=1
     )
 
-    # 5. Train XGBoost model
-    model = XGBClassifier(
-        n_estimators=300,
-        max_depth=4,
-        learning_rate=0.05,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        objective="binary:logistic",
-        eval_metric="logloss",
-        base_score=0.5,
-        random_state=42
-    )
+    results_df.to_csv("results_with_risk.csv", index=False)
 
-    model.fit(X_train, y_train)
-    print("XGBoost training completed\n")
+    # FAIRNESS
+    fe = FairnessEvaluator()
+    print("Fairness Report:", fe.evaluate(results_df))
 
-    # 6. Predict probabilities
-    y_proba = model.predict_proba(X_test)[:, 1]
+    # VISUALIZATION
+    viz = RiskVisualizer()
+    viz.generate_all(results_df)
 
-    FINAL_THRESHOLD = 0.35
-    y_pred = (y_proba >= FINAL_THRESHOLD).astype(int)
+    # EVALUATION
+    evaluator = ModelEvaluator()
+    evaluator.evaluate(results_df)
 
-    print("📊 Classification Report:")
-    print(classification_report(y_test, y_pred), "\n")
-
-    # 7. Risk Engine
-    risk_engine = RiskEngine(low=0.3, high=0.6)
-
-    # 8. Final system output
-    final_output = X_test.copy()
-    final_output["True_Label"] = y_test.values
-    final_output["Predicted_Probability"] = y_proba
-    final_output["Predicted_Label"] = y_pred
-
-    final_output["Risk_Level"] = final_output["Predicted_Probability"].apply(
-        lambda p: risk_engine.assign_risk(p)["risk_level"]
-    )
-
-    final_output["Recommendation"] = final_output["Predicted_Probability"].apply(
-        lambda p: risk_engine.assign_risk(p)["recommendation"]
-    )
-
-    print("🧠 Sample System Decisions:\n")
-    print(final_output.head())
-
-    print("\n✅ AgentXHealth system run completed successfully.")
+    print("=== Finished AgentXHealth ===")
 
 
 if __name__ == "__main__":

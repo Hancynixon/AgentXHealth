@@ -1,64 +1,64 @@
+import numpy as np
+from sklearn.linear_model import LogisticRegression
+
+
 class CoordinatorReasoner:
-    """
-    CoordinatorReasoner
-    -------------------
-    Interprets and arbitrates between agent-level risk assessments
-    to produce a final system decision with reasoning.
-    """
 
     def __init__(self):
-        # Clinically motivated weights
-        self.weights = {
-            "lab": 0.6,
-            "physical": 0.25,
-            "demographic": 0.15
+        self.model = LogisticRegression(max_iter=1000, class_weight="balanced")
+        self.is_fitted = False
+
+        # Baseline means (estimated from dataset)
+        self.lab_baseline = 0.20
+        self.physical_baseline = 0.20
+        self.demo_baseline = 0.20
+
+    # ======================================================
+    # Train stacking layer
+    # ======================================================
+    def fit(self, X, y):
+        self.model.fit(X, y)
+        self.is_fitted = True
+
+    # ======================================================
+    # Predict final risk
+    # ======================================================
+    def reason(self, outputs):
+
+        lab_risk = outputs["lab"]["risk"]
+        phys_risk = outputs["physical"]["risk"]
+        demo_risk = outputs["demographic"]["risk"]
+
+        features = np.array([[lab_risk, phys_risk, demo_risk]])
+
+        # If stacking model trained
+        if self.is_fitted:
+            final_risk = self.model.predict_proba(features)[0][1]
+        else:
+            final_risk = (lab_risk + phys_risk + demo_risk) / 3
+
+        # Binary prediction using 0.5 threshold
+        final_prediction = 1 if final_risk >= 0.5 else 0
+
+        # ==========================================
+        # Dominance Logic
+        # ==========================================
+
+        lab_adj = lab_risk - self.lab_baseline
+        phys_adj = phys_risk - self.physical_baseline
+        demo_adj = demo_risk - self.demo_baseline
+
+        adjusted_scores = {
+            "Lab Agent": lab_adj,
+            "Physical Agent": phys_adj,
+            "Demographic Agent": demo_adj
         }
 
-    def reason(self, agent_outputs: dict) -> dict:
-        """
-        Combine agent risks, detect conflicts, and explain decision.
-        """
-
-        # Extract risks
-        lab_risk = agent_outputs["lab"]["lab_risk_score"]
-        phys_risk = agent_outputs.get("physical", {}).get("physical_risk_score", 0.0)
-        demo_risk = agent_outputs.get("demographic", {}).get("demographic_risk_score", 0.0)
-
-        # Weighted contributions
-        contributions = {
-            "lab": self.weights["lab"] * lab_risk,
-            "physical": self.weights["physical"] * phys_risk,
-            "demographic": self.weights["demographic"] * demo_risk
-        }
-
-        final_risk = sum(contributions.values())
-
-        # Dominant agent
-        dominant_agent = max(contributions, key=contributions.get)
-
-        # Conflict detection
-        conflict = self._detect_conflict(lab_risk, phys_risk, demo_risk)
-
-        # Explanation
-        explanation = self._generate_explanation(dominant_agent, conflict)
+        dominant_agent = max(adjusted_scores, key=adjusted_scores.get)
 
         return {
-            "final_risk": round(final_risk, 3),
-            "agent_contributions": {k: round(v, 3) for k, v in contributions.items()},
+            "final_risk": float(final_risk),
+            "final_prediction": int(final_prediction),
             "dominant_agent": dominant_agent,
-            "conflict_detected": conflict,
-            "decision_explanation": explanation
+            "confidence": float(max(lab_risk, phys_risk, demo_risk))
         }
-
-    def _detect_conflict(self, lab, phys, demo) -> bool:
-        risks = [lab, phys, demo]
-        return max(risks) > 0.6 and min(risks) < 0.3
-
-    def _generate_explanation(self, dominant_agent: str, conflict: bool) -> str:
-        if conflict:
-            return (
-                f"Conflicting signals detected. "
-                f"{dominant_agent.capitalize()} indicators dominate despite disagreement."
-            )
-        else:
-            return f"{dominant_agent.capitalize()} indicators primarily drive overall risk."

@@ -1,67 +1,88 @@
 import numpy as np
-import pandas as pd
-from interpret.glassbox import ExplainableBoostingClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
 
 
 class LabAgentIntelligent:
-    """
-    Intelligent Lab Agent
-    ---------------------
-    Learns lab-specific diabetes risk using an explainable-by-design model
-    and produces risk, explanations, and counterfactual insights.
-    """
 
     def __init__(self):
-        self.features = ["Glucose", "Insulin"]
-        self.model = ExplainableBoostingClassifier(
-            interactions=0,
-            random_state=42
+        self.scaler = StandardScaler()
+        self.model = LogisticRegression(
+            max_iter=1000,
+            class_weight="balanced"
         )
-        self.fitted = False
+        self.is_fitted = False
+        self.X_train_ = None  # <-- important for SHAP
 
-    def fit(self, df: pd.DataFrame, y: pd.Series):
-        """
-        Train the lab-specific risk model.
-        """
-        X = df[self.features].copy()
-        self.model.fit(X, y)
-        self.fitted = True
+    # --------------------------------------------------
+    # Clinical indices
+    # --------------------------------------------------
 
-    def predict(self, df: pd.DataFrame) -> dict:
-        """
-        Predict lab risk and provide explanations.
-        """
-        if not self.fitted:
-            raise RuntimeError("LabAgentIntelligent must be fitted first.")
+    def _compute_homa_ir(self, glucose, insulin):
+        if glucose <= 0 or insulin <= 0:
+            return 0.0
+        return (glucose * insulin) / 405.0
 
-        X = df[self.features].copy()
+    def _compute_quicki(self, glucose, insulin):
+        if glucose <= 0 or insulin <= 0:
+            return 0.0
+        return 1 / (np.log(insulin) + np.log(glucose))
 
-        # Risk probability
-        prob = self.model.predict_proba(X)[0, 1]
+    # --------------------------------------------------
+    # Feature builder (IMPORTANT)
+    # --------------------------------------------------
 
-        # Feature contributions (local explanation)
-        contributions = self.model.explain_local(X).data(0)["scores"]
-        explanation = dict(zip(self.features, contributions))
+    def _build_features(self, df):
 
-        # Counterfactual reasoning (simple, actionable)
-        counterfactuals = self._counterfactual_suggestions(explanation)
+        features = []
 
-        return {
-            "lab_risk_score": float(prob),
-            "lab_explanations": explanation,
-            "lab_counterfactuals": counterfactuals
-        }
+        for _, row in df.iterrows():
 
-    def _counterfactual_suggestions(self, explanation: dict) -> dict:
-        """
-        Generate simple counterfactual guidance based on feature effects.
-        """
-        suggestions = {}
+            g = float(row["Glucose"])
+            ins = float(row["Insulin"])
+            dpf = float(row["DiabetesPedigreeFunction"])
 
-        for feature, effect in explanation.items():
-            if effect > 0:
-                suggestions[feature] = "reduce"
-            else:
-                suggestions[feature] = "maintain"
+            homa = self._compute_homa_ir(g, ins)
+            quicki = self._compute_quicki(g, ins)
 
-        return suggestions
+            features.append([
+                g,
+                g**2,
+                ins,
+                g * ins,
+                homa,
+                quicki,
+                dpf
+            ])
+
+        return np.array(features)
+
+    # --------------------------------------------------
+    # Training
+    # --------------------------------------------------
+
+    def fit(self, df, y):
+
+        X = self._build_features(df)
+
+        X_scaled = self.scaler.fit_transform(X)
+
+        self.model.fit(X_scaled, y)
+
+        self.X_train_ = X_scaled.copy()  # store scaled training matrix
+        self.is_fitted = True
+
+        return self
+
+    # --------------------------------------------------
+    # Prediction
+    # --------------------------------------------------
+
+    def predict(self, row_df):
+
+        X = self._build_features(row_df)
+        X_scaled = self.scaler.transform(X)
+
+        prob = self.model.predict_proba(X_scaled)[0][1]
+
+        return {"risk": float(prob)}

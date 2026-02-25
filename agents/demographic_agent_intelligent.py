@@ -1,37 +1,52 @@
-import pandas as pd
+import numpy as np
 from sklearn.linear_model import LogisticRegression
 
 
 class DemographicAgentIntelligent:
-    """
-    DemographicAgentIntelligent
-    ---------------------------
-    Estimates baseline diabetes risk using demographic features.
-    Designed to provide population-level context, not dominance.
-    """
 
     def __init__(self):
-        self.features = ["Age", "Pregnancies"]
-        self.model = LogisticRegression(solver="liblinear")
-        self.is_fitted = False
+        self.model = LogisticRegression(max_iter=1000)
+        self.X_train_ = None
 
-    def fit(self, df: pd.DataFrame, y: pd.Series):
-        X_demo = df[self.features].copy()
-        self.model.fit(X_demo, y)
-        self.is_fitted = True
+    # --------------------------------------------------
+    # Feature builder
+    # --------------------------------------------------
 
-    def predict(self, df: pd.DataFrame) -> dict:
-        if not self.is_fitted:
-            raise RuntimeError("DemographicAgentIntelligent is not fitted.")
+    def _build_features(self, df):
 
-        X_demo = df[self.features].copy()
-        risk = self.model.predict_proba(X_demo)[0, 1]
+        age = df["Age"].astype(float)
 
-        explanations = dict(
-            zip(self.features, self.model.coef_[0])
-        )
+        if "Pregnancies" in df.columns:
+            preg = df["Pregnancies"].astype(float)
+        else:
+            preg = np.zeros(len(df))
+
+        return np.column_stack([age, preg])
+
+    # --------------------------------------------------
+    # Training
+    # --------------------------------------------------
+
+    def fit(self, df, y):
+
+        X = self._build_features(df)
+
+        self.model.fit(X, y)
+
+        self.X_train_ = X.copy()
+
+        return self
+
+    # --------------------------------------------------
+    # Prediction
+    # --------------------------------------------------
+
+    def predict(self, df):
+
+        X = self._build_features(df)
+
+        prob = self.model.predict_proba(X)[0][1]
 
         return {
-            "demographic_risk_score": float(risk),
-            "demographic_explanations": explanations
+            "risk": round(float(prob), 4)
         }
