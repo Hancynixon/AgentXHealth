@@ -4,4 +4,4 @@ __pycache__/
 *.joblib
 .ipynb_checkpoints/
 .env
-api/credentials.json
+api/credentials.jsoncredentials.json

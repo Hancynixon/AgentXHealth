@@ -1,3 +1,5 @@
+import warnings
+
 import pandas as pd
 import numpy as np
 import shap
@@ -7,150 +9,90 @@ from agents.lab_agent_intelligent import LabAgentIntelligent
 from agents.physical_agent_intelligent import PhysicalAgentIntelligent
 from agents.demographic_agent_intelligent import DemographicAgentIntelligent
 
+# ==========================================================
+# WARNING FILTERS (CLEANER OUTPUT)
+# ==========================================================
+# Suppress "X has feature names..." from sklearn
+warnings.filterwarnings(
+    "ignore",
+    message="X has feature names, but StandardScaler was fitted without feature names"
+)
+
+# Suppress noisy joblib resource_tracker warnings
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    module="joblib"
+)
 
 # ==========================================================
 # GLOBAL PLOT SETTINGS (JOURNAL QUALITY)
 # ==========================================================
-
 plt.style.use("default")
 plt.rcParams.update({
     "font.size": 12
 })
 
-
 # ==========================================================
-# DATASET LOADER
+# DATASET LOADER (Pima dataset)
 # ==========================================================
-
 def load_dataset():
-    print("Loading dataset...")
+    print("Loading Pima Indians Diabetes dataset...")
     df = pd.read_csv("data/raw/diabetes.csv")
     y = df["Outcome"]
     return df, y
 
-
 # ==========================================================
-# LAB FEATURE BUILDER
+# GENERIC SHAP RUNNER — WRAP PIPELINE IN CALLABLE
 # ==========================================================
-
-def build_lab_features(df, lab_agent):
-
-    rows = []
-
-    for _, row in df.iterrows():
-
-        g = float(row["Glucose"])
-        ins = float(row["Insulin"])
-        dpf = float(row["DiabetesPedigreeFunction"])
-
-        homa = lab_agent._compute_homa_ir(g, ins)
-        quicki = lab_agent._compute_quicki(g, ins)
-
-        rows.append([
-            g,
-            g**2,
-            ins,
-            g * ins,
-            homa,
-            quicki,
-            dpf
-        ])
-
-    columns = [
-        "Glucose",
-        "Glucose^2",
-        "Insulin",
-        "Glucose*Insulin",
-        "HOMA-IR",
-        "QUICKI",
-        "DPF"
-    ]
-
-    return pd.DataFrame(rows, columns=columns)
-
-
-# ==========================================================
-# PHYSICAL FEATURE BUILDER
-# ==========================================================
-
-def build_physical_features(df, phys_agent):
-
-    bmi = df["BMI"].astype(float)
-    bp = df["BloodPressure"].astype(float)
-
-    bmi_stage = bmi.apply(phys_agent._bmi_stage)
-    bp_stage = bp.apply(phys_agent._bp_stage)
-
-    features = pd.DataFrame({
-        "BMI": bmi,
-        "BloodPressure": bp,
-        "BMI_stage": bmi_stage,
-        "BP_stage": bp_stage
-    })
-
-    return features
-
-
-# ==========================================================
-# DEMOGRAPHIC FEATURE BUILDER
-# ==========================================================
-
-def build_demo_features(df):
-
-    features = pd.DataFrame({
-        "Age": df["Age"].astype(float),
-        "Pregnancies": df["Pregnancies"].astype(float)
-    })
-
-    return features
-
-
-# ==========================================================
-# GENERIC SHAP RUNNER (UPDATED FOR PUBLICATION)
-# ==========================================================
-
-def run_shap(model, X_df, title, filename):
-
+def run_shap(model, X_df, title, filename, max_samples=1000):
+    """
+    model     : fitted sklearn Pipeline (scaler + clf)
+    X_df      : pandas DataFrame of engineered features
+    title     : plot title suffix
+    filename  : output PNG filename
+    max_samples : subsample size for speed
+    """
     print(f"\nGenerating SHAP for {title}...")
 
-    explainer = shap.Explainer(model, X_df)
-    shap_values = explainer(X_df)
+    # Downsample for speed if dataset is large
+    if len(X_df) > max_samples:
+        X_shap = X_df.sample(n=max_samples, random_state=42)
+    else:
+        X_shap = X_df
+
+    # SHAP expects a callable model; wrap predict_proba[:, 1]
+    explainer = shap.Explainer(
+        lambda X: model.predict_proba(X)[:, 1],
+        X_shap
+    )
+    shap_values = explainer(X_shap)
 
     plt.figure(figsize=(8, 6))
-
     shap.summary_plot(
         shap_values,
-        X_df,
+        X_shap,
         show=False
     )
-
     plt.title(f"SHAP Summary – {title}")
     plt.tight_layout()
-
     plt.savefig(
         filename,
         dpi=300,
         bbox_inches="tight"
     )
-
     print(f"{filename} saved successfully.")
-
-    plt.show()
     plt.close()
-
 
 # ==========================================================
 # MAIN EXECUTION
 # ==========================================================
-
 def run():
-
     df, y = load_dataset()
 
     # ------------------------------------------------------
     # Train agents
     # ------------------------------------------------------
-
     print("Training Lab Agent...")
     lab = LabAgentIntelligent()
     lab.fit(df, y)
@@ -164,25 +106,66 @@ def run():
     demo.fit(df, y)
 
     # ------------------------------------------------------
-    # Build feature matrices
+    # Build feature matrices EXACTLY as in agents
     # ------------------------------------------------------
-
-    X_lab = build_lab_features(df, lab)
-    X_lab_scaled = pd.DataFrame(
-        lab.scaler.transform(X_lab),
-        columns=X_lab.columns
+    # Lab Agent features
+    X_lab = pd.DataFrame(
+        lab._build_features(df),
+        columns=[
+            "Glucose",
+            "Glucose^2",
+            "Insulin",
+            "Glucose*Insulin",
+            "HOMA-IR",
+            "QUICKI",
+            "DPF",
+            "DPF*Age",
+            "DPF*Pregnancies",
+            "Glucose>=126_Flag",
+            "Hyperinsulinemia_Flag",
+            "HOMA>=2.5_Flag",
+        ]
     )
 
-    X_phys = build_physical_features(df, physical)
-    X_demo = build_demo_features(df)
+    # Physical Agent features
+    X_phys = pd.DataFrame(
+        physical._build_features(df),
+        columns=[
+            "BMI",
+            "BloodPressure",
+            "SkinThickness",
+            "BMI_Stage",
+            "BP_Stage",
+            "BMI_BP_Ratio",
+            "BMI^2",
+            "Hypertension_Flag",
+            "Obesity_Flag",
+            "Obesity_Htn_Combo",
+            "Skin_BMI_Ratio",
+            "High_Skin_Flag",
+        ]
+    )
+
+    # Demographic Agent features
+    X_demo = pd.DataFrame(
+        demo._build_features(df),
+        columns=[
+            "Age",
+            "Pregnancies",
+            "Age_Risk_Flag",
+            "High_Parity_Flag",
+            "Age*Pregnancies",
+            "Age^2",
+            "Midlife_Flag",
+        ]
+    )
 
     # ------------------------------------------------------
-    # Generate SHAP Plots (Publication Named)
+    # Generate SHAP Plots (use full pipelines)
     # ------------------------------------------------------
-
     run_shap(
-        lab.model,
-        X_lab_scaled,
+        lab.model,          # pipeline: scaler + clf
+        X_lab,
         "Lab Agent",
         "Figure_4_SHAP_Lab_Agent.png"
     )
@@ -200,7 +183,6 @@ def run():
         "Demographic Agent",
         "Figure_6_SHAP_Demographic_Agent.png"
     )
-
 
 if __name__ == "__main__":
     run()

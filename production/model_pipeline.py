@@ -1,0 +1,217 @@
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+import pandas as pd
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import sys, os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from deployment.model_runner import run_model_for_input
+
+
+from sklearn.metrics import (
+    classification_report,
+    roc_auc_score,
+    confusion_matrix,
+    ConfusionMatrixDisplay,
+    roc_curve,
+    precision_score,
+    recall_score,
+    f1_score,
+)
+from sklearn.model_selection import train_test_split
+
+from agents.lab_agent_intelligent import LabAgentIntelligent
+from agents.physical_agent_intelligent import PhysicalAgentIntelligent
+from agents.demographic_agent_intelligent import DemographicAgentIntelligent
+
+
+# =========================================================
+# INLINE extract_prob — no model_pipeline dependency
+# =========================================================
+def extract_prob(value):
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, dict):
+        for key in ("risk", "probability", "prob", "final_risk", "score", "prediction"):
+            if key in value:
+                return float(value[key])
+        for v in value.values():
+            if isinstance(v, (int, float)):
+                return float(v)
+        raise ValueError(f"No numeric value found in dict: {value}")
+    if isinstance(value, (list, tuple)):
+        if len(value) > 0:
+            return extract_prob(value[0])
+        raise ValueError("Empty list/tuple returned by agent.")
+    if isinstance(value, np.ndarray):
+        return float(value.flat[0])
+    if isinstance(value, pd.Series):
+        return float(value.iloc[0])
+    raise ValueError(f"Cannot extract probability from type {type(value)}: {value!r}")
+
+
+# =========================================================
+# PREDICT ROW BY ROW — handles agents that return single dict
+# =========================================================
+def predict_all_rows(agent, X_df):
+    """
+    Call agent.predict() one row at a time.
+    Returns numpy array of float probabilities, one per row.
+    """
+    probas = []
+    for i in range(len(X_df)):
+        row = X_df.iloc[[i]]           # single-row DataFrame
+        try:
+            raw  = agent.predict(row)
+            prob = extract_prob(raw)
+        except Exception as e:
+            print(f"  Warning row {i}: {e} — defaulting to 0.5")
+            prob = 0.5
+        probas.append(prob)
+    return np.array(probas)
+
+
+# =========================================================
+# LOAD DATA
+# =========================================================
+df = pd.read_csv("data/raw/diabetes.csv")
+X  = df.drop("Outcome", axis=1)
+Y  = df["Outcome"]
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, Y, test_size=0.2, random_state=42, stratify=Y
+)
+
+train_df            = X_train.copy()
+train_df["Outcome"] = y_train
+
+print("=" * 57)
+print("  AgentXHealth — Model Evaluation Report")
+print("=" * 57)
+print(f"  Train size : {len(X_train)} samples")
+print(f"  Test size  : {len(X_test)}  samples")
+print(f"  Diabetic % : {Y.mean()*100:.1f}% positive class")
+print("=" * 57)
+
+AGENTS = [
+    ("Lab Agent",         LabAgentIntelligent),
+    ("Physical Agent",    PhysicalAgentIntelligent),
+    ("Demographic Agent", DemographicAgentIntelligent),
+]
+
+all_auc    = {}
+all_probas = {}
+
+fig_roc, ax_roc = plt.subplots(figsize=(8, 6))
+fig_cm,  axes   = plt.subplots(1, 3, figsize=(16, 5))
+
+for idx, (name, AgentClass) in enumerate(AGENTS):
+    print(f"\n{'─'*57}")
+    print(f"  {name}")
+    print(f"{'─'*57}")
+
+    # ── Train ─────────────────────────────────────────────
+    agent = AgentClass().fit(train_df, y_train)
+
+    # ── Predict row by row ────────────────────────────────
+    print(f"  Running predictions on {len(X_test)} test rows...")
+    probas = predict_all_rows(agent, X_test)
+    binary = (probas >= 0.5).astype(int)
+
+    # ── Metrics ───────────────────────────────────────────
+    auc = roc_auc_score(y_test, probas)
+    all_auc[name]    = auc
+    all_probas[name] = probas
+
+    print(classification_report(
+        y_test, binary,
+        target_names=["Non-Diabetic", "Diabetic"]
+    ))
+    print(f"  ROC-AUC : {auc:.4f}")
+
+    # ── Threshold sensitivity ─────────────────────────────
+    print(f"\n  Threshold Sensitivity (Diabetic class):")
+    print(f"  {'Thresh':>8}  {'Recall':>8}  {'Precision':>10}  {'F1':>8}")
+    for thresh in [0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60]:
+        b    = (probas >= thresh).astype(int)
+        rec  = recall_score(y_test,  b, zero_division=0)
+        prec = precision_score(y_test, b, zero_division=0)
+        f1   = f1_score(y_test, b, zero_division=0)
+        flag = "  ← clinical recommended" if thresh == 0.40 else ""
+        print(f"  {thresh:>8.2f}  {rec:>8.4f}  {prec:>10.4f}  {f1:>8.4f}{flag}")
+
+    # ── ROC curve ─────────────────────────────────────────
+    fpr, tpr, _ = roc_curve(y_test, probas)
+    ax_roc.plot(fpr, tpr, label=f"{name} (AUC={auc:.3f})")
+
+    # ── Confusion matrix ──────────────────────────────────
+    cm = confusion_matrix(y_test, binary)
+    ConfusionMatrixDisplay(cm, display_labels=["Non-Diabetic", "Diabetic"]).plot(
+        ax=axes[idx], colorbar=False
+    )
+    axes[idx].set_title(f"{name}\nAUC={auc:.3f}", fontsize=11)
+
+
+# =========================================================
+# ENSEMBLE EVALUATION
+# =========================================================
+print(f"\n{'='*57}")
+print("  ENSEMBLE (Lab×0.5 + Physical×0.3 + Demographic×0.2)")
+print(f"{'='*57}")
+
+ensemble_probas = (
+    all_probas["Lab Agent"]         * 0.5 +
+    all_probas["Physical Agent"]    * 0.3 +
+    all_probas["Demographic Agent"] * 0.2
+)
+ensemble_binary = (ensemble_probas >= 0.5).astype(int)
+ensemble_auc    = roc_auc_score(y_test, ensemble_probas)
+all_auc["Ensemble"] = ensemble_auc
+
+print(classification_report(
+    y_test, ensemble_binary,
+    target_names=["Non-Diabetic", "Diabetic"]
+))
+print(f"  ROC-AUC : {ensemble_auc:.4f}")
+
+# ── ROC — ensemble + diagonal ─────────────────────────────
+fpr_e, tpr_e, _ = roc_curve(y_test, ensemble_probas)
+ax_roc.plot(fpr_e, tpr_e, "k--", linewidth=2,
+            label=f"Ensemble (AUC={ensemble_auc:.3f})")
+ax_roc.plot([0,1], [0,1], "gray", linestyle="dotted", label="Random")
+ax_roc.set_xlabel("False Positive Rate")
+ax_roc.set_ylabel("True Positive Rate")
+ax_roc.set_title("ROC Curves — All Agents + Ensemble")
+ax_roc.legend(loc="lower right")
+ax_roc.grid(True, alpha=0.3)
+fig_roc.tight_layout()
+fig_roc.savefig("evaluation_roc_curves.png", dpi=150)
+
+fig_cm.suptitle("Confusion Matrices (threshold=0.5)", fontsize=14)
+fig_cm.tight_layout()
+fig_cm.savefig("evaluation_confusion_matrices.png", dpi=150)
+
+# =========================================================
+# FINE-TUNING VERDICT
+# =========================================================
+print(f"\n{'='*57}")
+print("  FINE-TUNING VERDICT")
+print(f"{'='*57}")
+for name, auc in all_auc.items():
+    if auc >= 0.82:
+        status = "✅ Excellent — no fine-tuning needed"
+    elif auc >= 0.78:
+        status = "✅ Good — no fine-tuning needed"
+    elif auc >= 0.74:
+        status = "⚠  Acceptable — threshold calibration suggested"
+    else:
+        status = "❌ Below threshold — fine-tuning recommended"
+    print(f"  {name:<22}: AUC={auc:.4f}  {status}")
+
+print(f"\n  Saved: evaluation_roc_curves.png")
+print(f"  Saved: evaluation_confusion_matrices.png")
+print(f"{'='*57}")

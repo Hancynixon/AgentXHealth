@@ -1,0 +1,49 @@
+Metric,Value
+Internal | Accuracy,0.8052
+Internal | ROC-AUC,0.8981
+Internal | AUC CI Low,0.8271
+Internal | AUC CI High,0.9401
+Internal | Brier Score,0.1451
+Internal | Precision Class 0,0.85
+Internal | Precision Class 1,0.7222
+Internal | Recall Class 0,0.85
+Internal | Recall Class 1,0.7222
+Internal | F1 Class 0,0.85
+Internal | F1 Class 1,0.7222
+Internal | Macro Precision,0.7861
+Internal | Macro Recall,0.7861
+Internal | Macro F1,0.7861
+Internal | Optimal Threshold,0.4
+Internal | TN,85.0
+Internal | FP,15.0
+Internal | FN,15.0
+Internal | TP,39.0
+CV | Lab Agent AUC Mean,0.8137
+CV | Lab Agent AUC Std,0.0278
+CV | Physical Agent AUC Mean,0.6709
+CV | Physical Agent AUC Std,0.0303
+CV | Demographic Agent AUC Mean,0.6898
+CV | Demographic Agent AUC Std,0.0422
+Ablation | Full Framework AUC,0.8981
+Ablation | No Lab AUC,0.8231
+Ablation | No Lab Delta,-0.075
+Ablation | No Physical AUC,0.8789
+Ablation | No Physical Delta,-0.0193
+Ablation | No Demographic AUC,0.8915
+Ablation | No Demographic Delta,-0.0067
+External | Optimal Threshold,0.34
+External | Accuracy,0.9453
+External | ROC-AUC,0.9526
+External | AUC CI Low,0.9426
+External | AUC CI High,0.96
+External | Brier Score,0.0627
+External | Precision Class 0,0.97
+External | Precision Class 1,0.7782
+External | Recall Class 0,0.9672
+External | Recall Class 1,0.7935
+External | F1 Class 0,0.9686
+External | F1 Class 1,0.7858
+External | TN,4754.0
+External | FP,161.0
+External | FN,147.0
+External | TP,565.0
