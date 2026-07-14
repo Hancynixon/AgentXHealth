@@ -1,7 +1,10 @@
+# Python
+.venv/
 __pycache__/
 *.pyc
-*.pkl
-*.joblib
-.ipynb_checkpoints/
-.env
-api/credentials.jsoncredentials.json
+
+# Secrets
+credentials.json
+
+# VS Code
+.vscode/
